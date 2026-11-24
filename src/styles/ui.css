@@ -216,3 +216,16 @@
 .wy-editor-content { display: flex; flex-direction: column; }
 .wy-editor-content > .block-editor { flex: 1; display: flex; flex-direction: column; padding-block: var(--wy-editor-padding, 2.5rem); }
 .wy-editor-content > .block-editor > .ProseMirror { flex: 1; }
+
+/* Paramètre image (BlockSettings) */
+.wy-image-field { display: flex; flex-direction: column; gap: 0.5rem; }
+.wy-image-preview { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 0.375rem; border: 1px solid #e2e8f0; }
+.wy-image-empty { display: flex; align-items: center; justify-content: center; font-size: 0.75rem; opacity: 0.6; }
+.wy-image-actions { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+
+/* Paramètre focus : cible de cadrage sur l'aperçu de l'image */
+.wy-focus { position: relative; align-self: center; max-width: 100%; cursor: crosshair; touch-action: none; border-radius: 0.375rem; }
+.wy-focus:focus-visible { outline: 2px solid var(--wy-accent, #6366f1); outline-offset: 2px; }
+.wy-focus-image { display: block; max-width: 100%; max-height: 16rem; border-radius: 0.375rem; border: 1px solid #e2e8f0; user-select: none; pointer-events: none; }
+.wy-focus-target { position: absolute; width: 1.5rem; height: 1.5rem; translate: -50% -50%; border: 2px solid #fff; border-radius: 9999px; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5), inset 0 0 0 1px rgb(0 0 0 / 0.5); pointer-events: none; }
+.wy-focus-target::after { content: ""; position: absolute; inset: 50%; width: 0.25rem; height: 0.25rem; translate: -50% -50%; border-radius: 9999px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.5); }

@@ -66,4 +66,6 @@
 
 @layer base {
   .rich-content img:not([data-type]) { max-width: 100%; height: auto; }
+  /* Paramètre image de bloc laissé vide */
+  .rich-content:not(.ProseMirror) img[data-type]:not([src]) { display: none; }
 }

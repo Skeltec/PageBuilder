@@ -1,5 +1,5 @@
-import { o as paramDefaults, t as BlockEditor } from "./BlockEditor-tlMKRuPA.js";
-import { computed, defineComponent, h, inject, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowRef, toValue, watch } from "vue";
+import { o as paramDefaults, s as safeFocusValue, t as BlockEditor } from "./BlockEditor-COn6kcjx.js";
+import { computed, defineComponent, h, inject, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowRef, toValue, watch, watchEffect } from "vue";
 //#region src/vue/context.ts
 var BlockEditorKey = Symbol("BlockEditor");
 /**
@@ -338,7 +338,15 @@ var uid = 0;
 function paramsOf(instance) {
 	return instance.node.attrs.params ?? paramDefaults(instance.block.params);
 }
-/** Champ de paramètre : nombre (curseur si borné), case à cocher, choix (segmenté ≤ 4 options, sinon liste) */
+/** "x% y%" → [x, y] */
+function focusPoint(value) {
+	const [x, y] = (safeFocusValue(value) || "50% 50%").split(" ").map((v) => parseInt(v, 10));
+	return [x, y];
+}
+/**
+* Champ de paramètre : nombre (curseur si borné), case à cocher, choix (segmenté ≤ 4 options,
+* sinon liste), image. Un paramètre focus s'affiche dans le champ de son image (cible sur l'aperçu).
+*/
 var ParamField = defineComponent({
 	name: "ParamField",
 	props: {
@@ -357,15 +365,137 @@ var ParamField = defineComponent({
 				Boolean
 			],
 			required: true
+		},
+		/** Requis pour un paramètre image (téléversement via editor.assets) */
+		editor: {
+			type: Object,
+			default: void 0
+		},
+		/** Paramètre image : point de cadrage associé (paramètre focus) */
+		focus: {
+			type: Object,
+			default: void 0
 		}
 	},
-	emits: { change: (_value) => true },
+	emits: {
+		change: (_value) => true,
+		focusChange: (_value) => true
+	},
 	setup(props, { emit }) {
 		const id = `wy-param-${++uid}`;
+		const preview = shallowRef(null);
+		const busy = shallowRef(false);
+		const dragging = shallowRef(null);
+		const pointAt = (ev) => {
+			const box = ev.currentTarget.getBoundingClientRect();
+			const pct = (v, size) => Math.min(100, Math.max(0, Math.round(v / size * 100)));
+			return [pct(ev.clientX - box.left, box.width), pct(ev.clientY - box.top, box.height)];
+		};
+		const onFocusDown = (ev) => {
+			if (ev.button !== 0) return;
+			ev.preventDefault();
+			ev.currentTarget.setPointerCapture(ev.pointerId);
+			ev.currentTarget.focus();
+			dragging.value = pointAt(ev);
+		};
+		const onFocusMove = (ev) => {
+			if (dragging.value) dragging.value = pointAt(ev);
+		};
+		const onFocusUp = () => {
+			const point = dragging.value;
+			dragging.value = null;
+			if (point) emit("focusChange", `${point[0]}% ${point[1]}%`);
+		};
+		const onFocusKey = (ev) => {
+			const move = {
+				ArrowLeft: [-1, 0],
+				ArrowRight: [1, 0],
+				ArrowUp: [0, -1],
+				ArrowDown: [0, 1]
+			}[ev.key];
+			if (!move || !props.focus) return;
+			ev.preventDefault();
+			const step = ev.shiftKey ? 1 : 5;
+			const [x, y] = focusPoint(props.focus.value);
+			const clamp = (n) => Math.min(100, Math.max(0, n));
+			emit("focusChange", `${clamp(x + move[0] * step)}% ${clamp(y + move[1] * step)}%`);
+		};
+		watchEffect(async () => {
+			const src = props.definition.type === "image" ? String(props.value) : "";
+			if (!src) return preview.value = null;
+			if (preview.value?.src === src) return;
+			const url = await (props.editor?.assets?.resolveSrc(src) ?? src);
+			if (String(props.value) === src) preview.value = {
+				src,
+				url
+			};
+		});
+		const choose = async () => {
+			const assets = props.editor?.assets;
+			if (!assets || busy.value) return;
+			busy.value = true;
+			try {
+				const ref = await assets.pickRef({ accept: "image/*" });
+				if (ref) emit("change", ref);
+			} finally {
+				busy.value = false;
+			}
+		};
+		const focusField = (url) => {
+			const focus = props.focus;
+			const focusLabel = focus.definition.label ?? "Cadrage";
+			const [x, y] = dragging.value ?? focusPoint(focus.value);
+			return [h("div", {
+				class: "wy-focus",
+				tabindex: 0,
+				role: "group",
+				"aria-label": `${focusLabel} : ${x} % × ${y} %`,
+				onPointerdown: onFocusDown,
+				onPointermove: onFocusMove,
+				onPointerup: onFocusUp,
+				onPointercancel: onFocusUp,
+				onKeydown: onFocusKey
+			}, [h("img", {
+				class: "wy-focus-image",
+				src: url,
+				alt: "",
+				draggable: false
+			}), h("span", {
+				class: "wy-focus-target",
+				style: {
+					left: `${x}%`,
+					top: `${y}%`
+				},
+				"aria-hidden": "true"
+			})]), h("p", { class: "wy-muted" }, `${focusLabel} : cliquez sur l'image pour placer la cible`)];
+		};
 		return () => {
 			const def = props.definition;
 			const label = def.label ?? props.name;
 			const value = props.value;
+			if (def.type === "focus") return null;
+			if (def.type === "image") {
+				const src = String(value);
+				const canUpload = !!props.editor?.assets;
+				const loaded = src && preview.value?.src === src ? preview.value.url : null;
+				return h("div", {
+					role: "group",
+					"aria-label": label
+				}, [h("span", { class: "wy-label" }, label), h("div", { class: "wy-image-field" }, [...loaded && props.focus ? focusField(loaded) : [loaded ? h("img", {
+					class: "wy-image-preview",
+					src: loaded,
+					alt: ""
+				}) : h("div", { class: "wy-image-preview wy-image-empty" }, src ? "…" : "Aucune image")], h("div", { class: "wy-image-actions" }, [h("button", {
+					type: "button",
+					class: "wy-btn",
+					disabled: !canUpload || busy.value,
+					onClick: choose
+				}, busy.value ? "Envoi…" : src ? "Remplacer" : "Choisir une image"), src ? h("button", {
+					type: "button",
+					class: "wy-btn wy-btn-danger",
+					onClick: () => emit("change", "")
+				}, "Retirer") : null])])]);
+			}
 			if (def.type === "number") {
 				const bounded = def.min !== void 0 && def.max !== void 0;
 				return h("div", [h("div", { class: "wy-field-head" }, [h("label", {
@@ -438,6 +568,7 @@ var BlockSettings = defineComponent({
 			const { block } = instance;
 			const params = paramsOf(instance);
 			const fields = Object.entries(block.params);
+			const focusOf = (image) => fields.find((f) => f[1].type === "focus" && f[1].image === image);
 			return h("section", {
 				key: block.name,
 				class: "wy-section",
@@ -447,13 +578,22 @@ var BlockSettings = defineComponent({
 					class: "wy-icon",
 					...iconProps(block.icon)
 				}), h("div", { class: "wy-section-title" }, [h("h3", block.label), block.description ? h("p", { class: "wy-muted" }, block.description) : null])]),
-				fields.length ? h("div", { class: "wy-fields" }, fields.map(([name, def]) => h(ParamField, {
-					key: name,
-					name,
-					definition: def,
-					value: params[name],
-					onChange: (value) => e.setBlockParams(instance.pos, { [name]: value })
-				}))) : h("p", { class: "wy-muted" }, "Aucun paramètre"),
+				fields.length ? h("div", { class: "wy-fields" }, fields.filter(([, def]) => def.type !== "focus").map(([name, def]) => {
+					const focus = def.type === "image" ? focusOf(name) : void 0;
+					return h(ParamField, {
+						key: name,
+						name,
+						definition: def,
+						value: params[name],
+						editor: e,
+						focus: focus && {
+							definition: focus[1],
+							value: params[focus[0]]
+						},
+						onChange: (value) => e.setBlockParams(instance.pos, { [name]: value }),
+						onFocusChange: (value) => focus && e.setBlockParams(instance.pos, { [focus[0]]: value })
+					});
+				})) : h("p", { class: "wy-muted" }, "Aucun paramètre"),
 				h("div", { class: "wy-section-footer" }, [instance.fixed && parent ? h("span", { class: "wy-muted" }, `Intégré à « ${parent.block.label} »`) : h("button", {
 					type: "button",
 					class: "wy-btn wy-btn-danger",

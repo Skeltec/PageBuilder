@@ -79,6 +79,44 @@ export class AssetManager {
   }
 
   /**
+   * Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
+   * (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
+   * null si annulé ou refusé (uploadError émis).
+   */
+  pickRef({ accept = 'image/*' }: { accept?: string } = {}) {
+    return new Promise<string | null>((resolve) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.accept = accept
+      input.addEventListener('change', () => {
+        const file = input.files?.[0]
+        resolve(file ? this.uploadRef(file) : null)
+      })
+      input.addEventListener('cancel', () => resolve(null))
+      input.click()
+    })
+  }
+
+  /** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
+  async uploadRef(file: File): Promise<string | null> {
+    const problem = this.validate(file)
+    if (problem) {
+      this.host.emit('uploadError', { file, error: new Error(problem), stage: 'validation' })
+      return null
+    }
+    this.host.emit('uploadStart', { file })
+    try {
+      const ref = await this.adapter.upload(file, { signal: this.abort.signal })
+      if (this.abort.signal.aborted) return null
+      this.host.emit('uploadEnd', { file, ref })
+      return this.ref(ref.id)
+    } catch (error) {
+      if (!this.abort.signal.aborted) this.host.emit('uploadError', { file, error, stage: 'upload' })
+      return null
+    }
+  }
+
+  /**
    * Téléverse et insère des fichiers : images en bloc <img>, autres fichiers en
    * lien. `at` : position d'insertion (défaut : curseur). Les fichiers refusés
    * (accept, maxSize) émettent uploadError.

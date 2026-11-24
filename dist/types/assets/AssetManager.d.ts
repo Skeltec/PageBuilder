@@ -47,6 +47,16 @@ export declare class AssetManager {
         multiple?: boolean;
     }): Promise<AssetRef[]>;
     /**
+     * Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
+     * (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
+     * null si annulé ou refusé (uploadError émis).
+     */
+    pickRef({ accept }?: {
+        accept?: string;
+    }): Promise<string | null>;
+    /** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
+    uploadRef(file: File): Promise<string | null>;
+    /**
      * Téléverse et insère des fichiers : images en bloc <img>, autres fichiers en
      * lien. `at` : position d'insertion (défaut : curseur). Les fichiers refusés
      * (accept, maxSize) émettent uploadError.

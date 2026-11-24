@@ -147,6 +147,15 @@
   outline-offset: 2px;
 }
 .ProseMirror img.is-uploading { opacity: 0.5; }
+/* Paramètre image de bloc encore vide : zone à cliquer pour sélectionner le bloc */
+.ProseMirror img[data-type].is-unset {
+  min-height: 8rem;
+  width: 100%;
+  background: repeating-linear-gradient(45deg, transparent 0 10px, rgb(148 163 184 / 0.12) 10px 20px);
+  outline: 1px dashed var(--color-slate-300, #cbd5e1);
+  cursor: pointer;
+}
+.ProseMirror img[data-type] { cursor: pointer; }
 .ProseMirror img.is-broken {
   min-height: 4rem;
   min-width: 8rem;

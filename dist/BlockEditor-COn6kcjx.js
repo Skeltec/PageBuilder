@@ -278,6 +278,53 @@ var AssetManager = class {
 		});
 	}
 	/**
+	* Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
+	* (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
+	* null si annulé ou refusé (uploadError émis).
+	*/
+	pickRef({ accept = "image/*" } = {}) {
+		return new Promise((resolve) => {
+			const input = document.createElement("input");
+			input.type = "file";
+			input.accept = accept;
+			input.addEventListener("change", () => {
+				const file = input.files?.[0];
+				resolve(file ? this.uploadRef(file) : null);
+			});
+			input.addEventListener("cancel", () => resolve(null));
+			input.click();
+		});
+	}
+	/** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
+	async uploadRef(file) {
+		const problem = this.validate(file);
+		if (problem) {
+			this.host.emit("uploadError", {
+				file,
+				error: new Error(problem),
+				stage: "validation"
+			});
+			return null;
+		}
+		this.host.emit("uploadStart", { file });
+		try {
+			const ref = await this.adapter.upload(file, { signal: this.abort.signal });
+			if (this.abort.signal.aborted) return null;
+			this.host.emit("uploadEnd", {
+				file,
+				ref
+			});
+			return this.ref(ref.id);
+		} catch (error) {
+			if (!this.abort.signal.aborted) this.host.emit("uploadError", {
+				file,
+				error,
+				stage: "upload"
+			});
+			return null;
+		}
+	}
+	/**
 	* Téléverse et insère des fichiers : images en bloc <img>, autres fichiers en
 	* lien. `at` : position d'insertion (défaut : curseur). Les fichiers refusés
 	* (accept, maxSize) émettent uploadError.
@@ -584,7 +631,7 @@ function defineBlock(name, template, options = {}) {
 		icon: options.icon,
 		thumbnail: options.thumbnail,
 		params,
-		extensions: parts.map((p) => toExtension(p, params)),
+		extensions: parts.map((p) => toExtension(p, params, name)),
 		placeholders: Object.fromEntries(parts.flatMap((p) => p.slot?.placeholder ? [[p.typeName, p.slot.placeholder]] : [])),
 		dependencies: [...new Set(parts.flatMap((p) => p.children.map(itemOf).filter(isRef).map((c) => c.ref)))],
 		emptyContent: () => buildJSON(tree, params, false),
@@ -604,15 +651,34 @@ function validateParams(blockName, params) {
 	for (const [key, def] of Object.entries(params)) {
 		if (!/^\w+$/.test(key)) throw new Error(`[${blockName}] nom de paramètre invalide : ${key}`);
 		if (def.type === "select" && !(def.default in def.options)) throw new Error(`[${blockName}] ${key} : la valeur par défaut doit faire partie des options`);
+		if (def.type === "focus" && params[def.image]?.type !== "image") throw new Error(`[${blockName}] ${key} : image="${def.image}" doit nommer un paramètre image`);
 	}
 }
 function compile(el, ctx, typeName, isRoot) {
 	const { blockName } = ctx;
 	if (el.tagName in SLOT_TAGS || el.tagName === BLOCK_TAG || el.tagName === REPEAT_TAG) throw new Error(`[${blockName}] <${el.tagName} /> doit être enveloppé dans un élément HTML`);
+	const isImg = el.tagName === "img";
 	const attrs = {};
 	for (const a of Array.from(el.attributes)) {
-		for (const [, ref] of a.value.matchAll(/\{(\w+)\}/g)) if (!(ref in ctx.params)) throw new Error(`[${blockName}] {${ref}} : paramètre non déclaré`);
+		for (const [, ref] of a.value.matchAll(/\{(\w+)\}/g)) {
+			if (!(ref in ctx.params)) throw new Error(`[${blockName}] {${ref}} : paramètre non déclaré`);
+			if (ctx.params[ref].type === "image" && !(isImg && a.name === "src" && a.value === `{${ref}}`)) throw new Error(`[${blockName}] {${ref}} : un paramètre image s'utilise seul, en src d'un <img>`);
+		}
 		attrs[a.name] = a.value;
+	}
+	if (isImg) {
+		const src = /^\{(\w+)\}$/.exec(attrs.src ?? "");
+		if (!src || ctx.params[src[1]].type !== "image") throw new Error(`[${blockName}] <img> : src="{param}" requis (paramètre image)`);
+		if (isRoot) throw new Error(`[${blockName}] <img> ne peut pas être la racine du template`);
+		if (el.childNodes.length) throw new Error(`[${blockName}] <img> doit être vide`);
+		return {
+			typeName,
+			tag: "img",
+			attrs,
+			isRoot,
+			leaf: true,
+			children: []
+		};
 	}
 	const elements = Array.from(el.children);
 	if (Array.from(el.childNodes).some((n) => n.nodeType === n.TEXT_NODE && n.textContent?.trim())) throw new Error(`[${blockName}] texte statique non supporté dans <${el.tagName}> (POC)`);
@@ -672,8 +738,42 @@ function isFixedBlock(editor, pos) {
 function inside(editor, typeName) {
 	return editor.state.selection.$from.parent.type.name === typeName;
 }
+var FOCUS_CENTER = "50% 50%";
+function defaultOf(def) {
+	if (def.type === "image") return "";
+	if (def.type === "focus") return safeFocusValue(def.default) || FOCUS_CENTER;
+	return def.default;
+}
+/** Point de cadrage "x% y%", entiers bornés à 0–100 ; '' si invalide */
+function safeFocusValue(value) {
+	const m = typeof value === "string" ? /^\s*(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%\s*$/.exec(value) : null;
+	if (!m) return "";
+	const clamp = (n) => Math.min(100, Math.max(0, Math.round(Number(n))));
+	return `${clamp(m[1])}% ${clamp(m[2])}%`;
+}
 function paramDefaults(defs) {
-	return Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, d.default]));
+	return Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, defaultOf(d)]));
+}
+/**
+* Valeur d'un paramètre image : référence `schéma:id` (asset:42) ou URL
+* http(s) / relative. Refuse javascript:, data:, etc. et tout caractère
+* pouvant sortir de l'attribut.
+*/
+function safeImageValue(value) {
+	if (typeof value !== "string") return "";
+	const v = value.trim();
+	if (!v || /[\s"'<>`\\]/.test(v)) return "";
+	if (v.startsWith("/") && !v.startsWith("//")) return v;
+	const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(v)?.[1].toLowerCase();
+	if (!scheme || [
+		"javascript",
+		"vbscript",
+		"data",
+		"file",
+		"blob",
+		"about"
+	].includes(scheme)) return "";
+	return v;
 }
 /** Ne garde que des valeurs valides : le HTML chargé n'est pas une source de confiance */
 function sanitizeParams(defs, raw = {}) {
@@ -684,6 +784,8 @@ function sanitizeParams(defs, raw = {}) {
 			const n = Number(v);
 			out[key] = Number.isFinite(n) && v !== "" && v != null ? Math.min(def.max ?? Infinity, Math.max(def.min ?? -Infinity, n)) : def.default;
 		} else if (def.type === "select") out[key] = typeof v === "string" && v in def.options ? v : def.default;
+		else if (def.type === "image") out[key] = safeImageValue(v);
+		else if (def.type === "focus") out[key] = safeFocusValue(v) || defaultOf(def);
 		else out[key] = typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : def.default;
 	}
 	return out;
@@ -694,7 +796,7 @@ function resolveParam(def, value) {
 }
 function interpolate(attrs, defs, params) {
 	const out = {};
-	for (const [name, raw] of Object.entries(attrs)) out[name] = raw.replace(/\{(\w+)\}/g, (_, key) => resolveParam(defs[key], params[key] ?? defs[key].default)).replace(/\s+/g, " ").trim();
+	for (const [name, raw] of Object.entries(attrs)) out[name] = raw.replace(/\{(\w+)\}/g, (_, key) => resolveParam(defs[key], params[key] ?? defaultOf(defs[key]))).replace(/\s+/g, " ").trim();
 	return out;
 }
 function readParams(el, defs) {
@@ -705,7 +807,8 @@ function readParams(el, defs) {
 		return paramDefaults(defs);
 	}
 }
-function toExtension(part, defs) {
+function toExtension(part, defs, rootName) {
+	if (part.leaf) return toImageExtension(part, defs, rootName);
 	const hasParams = Object.keys(defs).length > 0;
 	const defaults = paramDefaults(defs);
 	const marker = part.isRoot ? { "data-block-root": "" } : {};
@@ -815,6 +918,7 @@ function buildJSON(part, defs, sample) {
 			type: p.typeName,
 			...sample && textContent(p.slot.placeholder ?? "Texte")
 		};
+		if (p.leaf) return { type: p.typeName };
 		return {
 			type: p.typeName,
 			content: p.children.flatMap(childJSON)
@@ -849,7 +953,7 @@ function rebuild(part, node, params, defs) {
 			params
 		}
 	};
-	if (part.slot) return out;
+	if (part.slot || part.leaf) return out;
 	const kids = node.content ?? [];
 	const content = [];
 	let i = 0;
@@ -891,6 +995,85 @@ function emptyItem(c, defs) {
 		return block.emptyContent();
 	}
 	return buildJSON(c, defs, false);
+}
+/**
+* <img src="{param}"> du template : feuille non éditable. Dans l'éditeur, le
+* src passe par le resolveSrc du nœud "image" (références `asset:id`) ; un
+* clic sélectionne le bloc, dont le panneau permet de choisir l'image.
+*/
+function toImageExtension(part, defs, rootName) {
+	const defaults = paramDefaults(defs);
+	const paramsOf = (attrs) => attrs.params ?? defaults;
+	const render = (params) => {
+		const attrs = interpolate(part.attrs, defs, params);
+		if (!attrs.src) delete attrs.src;
+		return attrs;
+	};
+	return Node.create({
+		name: part.typeName,
+		group: STRUCTURE_GROUP,
+		atom: true,
+		selectable: false,
+		draggable: false,
+		addAttributes() {
+			return { params: {
+				default: defaults,
+				rendered: false,
+				parseHTML: (el) => readParams(el, defs)
+			} };
+		},
+		parseHTML() {
+			return [{
+				tag: `img[data-type="${part.typeName}"]`,
+				priority: 100
+			}];
+		},
+		renderHTML({ node }) {
+			return ["img", mergeAttributes(render(paramsOf(node.attrs)), { "data-type": part.typeName })];
+		},
+		addNodeView() {
+			return ({ node, editor, getPos }) => {
+				const img = document.createElement("img");
+				img.setAttribute("data-type", part.typeName);
+				img.draggable = false;
+				const resolveSrc = (editor.extensionManager.extensions.find((e) => e.name === "image")?.options)?.resolveSrc ?? ((src) => src);
+				let token = 0;
+				const apply = (params) => {
+					const attrs = render(params);
+					for (const a of Array.from(img.attributes)) if (a.name !== "data-type" && a.name !== "src" && !(a.name in attrs)) img.removeAttribute(a.name);
+					for (const [k, v] of Object.entries(attrs)) if (k !== "src") img.setAttribute(k, v);
+					img.classList.toggle("is-unset", !attrs.src);
+					img.classList.remove("is-broken");
+					const current = ++token;
+					if (!attrs.src) {
+						img.removeAttribute("src");
+						return;
+					}
+					Promise.resolve(resolveSrc(attrs.src)).then((url) => current === token && img.setAttribute("src", url)).catch(() => current === token && img.classList.add("is-broken"));
+				};
+				apply(paramsOf(node.attrs));
+				img.addEventListener("mousedown", (e) => {
+					const pos = getPos();
+					if (pos === void 0) return;
+					const $pos = editor.state.doc.resolve(pos);
+					for (let d = $pos.depth; d > 0; d--) if ($pos.node(d).type.name === rootName) {
+						e.preventDefault();
+						editor.chain().focus().setNodeSelection($pos.before(d)).run();
+						return;
+					}
+				});
+				return {
+					dom: img,
+					update: (updated) => {
+						if (updated.type !== node.type) return false;
+						apply(paramsOf(updated.attrs));
+						return true;
+					},
+					ignoreMutation: () => true
+				};
+			};
+		}
+	});
 }
 //#endregion
 //#region src/core/unknownBlock.ts
@@ -1470,6 +1653,6 @@ var BlockEditorBuilder = class {
 	}
 };
 //#endregion
-export { toRef as _, isFixedBlock as a, AssetManager as c, parseAssetRef as d, resolveAssetRefs as f, resolveRefs as g, parseRef as h, defineBlock as i, DEFAULT_SCHEME as l, listRefIds as m, BlockEditorBuilder as n, paramDefaults as o, toAssetRef as p, UnknownBlock as r, LinkManager as s, BlockEditor as t, listAssetIds as u, AssetImage as v };
+export { resolveRefs as _, isFixedBlock as a, LinkManager as c, listAssetIds as d, parseAssetRef as f, parseRef as g, listRefIds as h, defineBlock as i, AssetManager as l, toAssetRef as m, BlockEditorBuilder as n, paramDefaults as o, resolveAssetRefs as p, UnknownBlock as r, safeFocusValue as s, BlockEditor as t, DEFAULT_SCHEME as u, toRef as v, AssetImage as y };
 
-//# sourceMappingURL=BlockEditor-tlMKRuPA.js.map
+//# sourceMappingURL=BlockEditor-COn6kcjx.js.map

@@ -28,6 +28,12 @@ import { Node, mergeAttributes, type Editor, type JSONContent, type KeyboardShor
  *     des classes complètes ("gap-4"), jamais "gap-{n}".
  *   - <Repeat count="nom"> : répète son unique enfant (élément ou <Block />)
  *     selon un paramètre number.
+ *   - Paramètre image : seulement en src entier d'un <img> vide du template
+ *     (<img src="{photo}" class="…" />). Valeur : référence (`asset:42`) ou
+ *     URL http(s) ; vide → <img> sans src (à masquer en CSS à la lecture).
+ *   - Paramètre focus : point de cadrage d'un paramètre image (`image: "photo"`),
+ *     valeur "x% y%" (0–100). Choisi en cliquant sur l'aperçu de l'image ;
+ *     s'utilise en style : <img src="{photo}" style="object-position: {cadrage}" />.
  * Les valeurs sont stockées sur la racine (data-params) et recopiées sur chaque
  * partie du bloc pour que renderHTML reste local au nœud.
  */
@@ -64,11 +70,15 @@ const STRUCTURE_GROUP = 'blockStructure'
 const registry = new Map<string, BlockDefinition>()
 
 // Pas de type "text" libre : interpolé dans un href/src, ce serait une faille XSS.
-// Les valeurs possibles sont toujours bornées (nombre, liste blanche, booléen).
+// Les valeurs possibles sont toujours bornées (nombre, liste blanche, booléen,
+// référence de fichier ou URL http(s) validée).
 export type ParamDefinition =
   | { type: 'number'; label?: string; default: number; min?: number; max?: number; step?: number }
   | { type: 'select'; label?: string; default: string; options: Record<string, string> }
   | { type: 'boolean'; label?: string; default: boolean; on?: string; off?: string }
+  | { type: 'image'; label?: string }
+  /** Point de cadrage ("x% y%") de l'image du paramètre `image`, choisi sur son aperçu */
+  | { type: 'focus'; label?: string; image: string; default?: string }
 
 export type ParamValue = number | string | boolean
 export type BlockParams = Record<string, ParamValue>
@@ -101,6 +111,8 @@ interface TemplatePart {
   /** Valeurs brutes, avec éventuels {param} */
   attrs: Record<string, string>
   isRoot: boolean
+  /** <img> du template : nœud feuille, sans contenu éditable */
+  leaf?: boolean
   slot?: { kind: SlotKind; placeholder?: string }
   children: TemplateChild[]
 }
@@ -152,7 +164,7 @@ export function defineBlock(name: string, template: string, options: BlockOption
     icon: options.icon,
     thumbnail: options.thumbnail,
     params,
-    extensions: parts.map((p) => toExtension(p, params)),
+    extensions: parts.map((p) => toExtension(p, params, name)),
     placeholders: Object.fromEntries(
       parts.flatMap((p) => (p.slot?.placeholder ? [[p.typeName, p.slot.placeholder]] : [])),
     ),
@@ -179,6 +191,9 @@ function validateParams(blockName: string, params: Record<string, ParamDefinitio
     if (def.type === 'select' && !(def.default in def.options)) {
       throw new Error(`[${blockName}] ${key} : la valeur par défaut doit faire partie des options`)
     }
+    if (def.type === 'focus' && params[def.image]?.type !== 'image') {
+      throw new Error(`[${blockName}] ${key} : image="${def.image}" doit nommer un paramètre image`)
+    }
   }
 }
 
@@ -188,12 +203,26 @@ function compile(el: Element, ctx: Context, typeName: string, isRoot: boolean): 
     throw new Error(`[${blockName}] <${el.tagName} /> doit être enveloppé dans un élément HTML`)
   }
 
+  const isImg = el.tagName === 'img'
   const attrs: Record<string, string> = {}
   for (const a of Array.from(el.attributes)) {
     for (const [, ref] of a.value.matchAll(/\{(\w+)\}/g)) {
       if (!(ref in ctx.params)) throw new Error(`[${blockName}] {${ref}} : paramètre non déclaré`)
+      if (ctx.params[ref].type === 'image' && !(isImg && a.name === 'src' && a.value === `{${ref}}`)) {
+        throw new Error(`[${blockName}] {${ref}} : un paramètre image s'utilise seul, en src d'un <img>`)
+      }
     }
     attrs[a.name] = a.value
+  }
+
+  if (isImg) {
+    const src = /^\{(\w+)\}$/.exec(attrs.src ?? '')
+    if (!src || ctx.params[src[1]].type !== 'image') {
+      throw new Error(`[${blockName}] <img> : src="{param}" requis (paramètre image)`)
+    }
+    if (isRoot) throw new Error(`[${blockName}] <img> ne peut pas être la racine du template`)
+    if (el.childNodes.length) throw new Error(`[${blockName}] <img> doit être vide`)
+    return { typeName, tag: 'img', attrs, isRoot, leaf: true, children: [] }
   }
 
   const elements = Array.from(el.children)
@@ -295,8 +324,39 @@ function inside(editor: Editor, typeName: string) {
   return editor.state.selection.$from.parent.type.name === typeName
 }
 
+const FOCUS_CENTER = '50% 50%'
+
+function defaultOf(def: ParamDefinition): ParamValue {
+  if (def.type === 'image') return ''
+  if (def.type === 'focus') return safeFocusValue(def.default) || FOCUS_CENTER
+  return def.default
+}
+
+/** Point de cadrage "x% y%", entiers bornés à 0–100 ; '' si invalide */
+export function safeFocusValue(value: unknown): string {
+  const m = typeof value === 'string' ? /^\s*(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%\s*$/.exec(value) : null
+  if (!m) return ''
+  const clamp = (n: string) => Math.min(100, Math.max(0, Math.round(Number(n))))
+  return `${clamp(m[1])}% ${clamp(m[2])}%`
+}
+
 export function paramDefaults(defs: Record<string, ParamDefinition>): BlockParams {
-  return Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, d.default]))
+  return Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, defaultOf(d)]))
+}
+
+/**
+ * Valeur d'un paramètre image : référence `schéma:id` (asset:42) ou URL
+ * http(s) / relative. Refuse javascript:, data:, etc. et tout caractère
+ * pouvant sortir de l'attribut.
+ */
+export function safeImageValue(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const v = value.trim()
+  if (!v || /[\s"'<>`\\]/.test(v)) return ''
+  if (v.startsWith('/') && !v.startsWith('//')) return v
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(v)?.[1].toLowerCase()
+  if (!scheme || ['javascript', 'vbscript', 'data', 'file', 'blob', 'about'].includes(scheme)) return ''
+  return v
 }
 
 /** Ne garde que des valeurs valides : le HTML chargé n'est pas une source de confiance */
@@ -311,6 +371,10 @@ export function sanitizeParams(defs: Record<string, ParamDefinition>, raw: Recor
         : def.default
     } else if (def.type === 'select') {
       out[key] = typeof v === 'string' && v in def.options ? v : def.default
+    } else if (def.type === 'image') {
+      out[key] = safeImageValue(v)
+    } else if (def.type === 'focus') {
+      out[key] = safeFocusValue(v) || defaultOf(def)
     } else {
       out[key] = typeof v === 'boolean' ? v : v === 'true' ? true : v === 'false' ? false : def.default
     }
@@ -327,7 +391,7 @@ function interpolate(attrs: Record<string, string>, defs: Record<string, ParamDe
   const out: Record<string, string> = {}
   for (const [name, raw] of Object.entries(attrs)) {
     out[name] = raw
-      .replace(/\{(\w+)\}/g, (_, key: string) => resolveParam(defs[key], params[key] ?? defs[key].default))
+      .replace(/\{(\w+)\}/g, (_, key: string) => resolveParam(defs[key], params[key] ?? defaultOf(defs[key])))
       .replace(/\s+/g, ' ')
       .trim()
   }
@@ -343,7 +407,9 @@ function readParams(el: HTMLElement, defs: Record<string, ParamDefinition>) {
   }
 }
 
-function toExtension(part: TemplatePart, defs: Record<string, ParamDefinition>): Node {
+function toExtension(part: TemplatePart, defs: Record<string, ParamDefinition>, rootName: string): Node {
+  if (part.leaf) return toImageExtension(part, defs, rootName)
+
   const hasParams = Object.keys(defs).length > 0
   const defaults = paramDefaults(defs)
   const marker = part.isRoot ? { 'data-block-root': '' } : {}
@@ -489,6 +555,7 @@ function buildJSON(part: TemplatePart, defs: Record<string, ParamDefinition>, sa
       return { type: p.typeName, content: [{ type: 'paragraph', ...(sample && textContent(SAMPLE_TEXT)) }] }
     }
     if (p.slot) return { type: p.typeName, ...(sample && textContent(p.slot.placeholder ?? 'Texte')) }
+    if (p.leaf) return { type: p.typeName }
     return { type: p.typeName, content: p.children.flatMap(childJSON) }
   }
   const one = (c: TemplatePart | BlockRef): JSONContent => {
@@ -519,7 +586,7 @@ function rebuild(
   defs: Record<string, ParamDefinition>,
 ): JSONContent {
   const out: JSONContent = { ...node, attrs: { ...node.attrs, params } }
-  if (part.slot) return out
+  if (part.slot || part.leaf) return out
 
   const kids = node.content ?? []
   const content: JSONContent[] = []
@@ -563,4 +630,100 @@ function emptyItem(c: TemplatePart | BlockRef, defs: Record<string, ParamDefinit
     return block.emptyContent()
   }
   return buildJSON(c, defs, false)
+}
+
+/**
+ * <img src="{param}"> du template : feuille non éditable. Dans l'éditeur, le
+ * src passe par le resolveSrc du nœud "image" (références `asset:id`) ; un
+ * clic sélectionne le bloc, dont le panneau permet de choisir l'image.
+ */
+function toImageExtension(part: TemplatePart, defs: Record<string, ParamDefinition>, rootName: string): Node {
+  const defaults = paramDefaults(defs)
+  const paramsOf = (attrs: Record<string, unknown>) => (attrs.params as BlockParams | undefined) ?? defaults
+  const render = (params: BlockParams) => {
+    const attrs = interpolate(part.attrs, defs, params)
+    if (!attrs.src) delete attrs.src
+    return attrs
+  }
+
+  return Node.create({
+    name: part.typeName,
+    group: STRUCTURE_GROUP,
+    atom: true,
+    selectable: false,
+    draggable: false,
+
+    addAttributes() {
+      return {
+        params: {
+          default: defaults,
+          rendered: false,
+          parseHTML: (el: HTMLElement) => readParams(el, defs),
+        },
+      }
+    },
+
+    parseHTML() {
+      return [{ tag: `img[data-type="${part.typeName}"]`, priority: 100 }]
+    },
+
+    renderHTML({ node }) {
+      return ['img', mergeAttributes(render(paramsOf(node.attrs)), { 'data-type': part.typeName })]
+    },
+
+    addNodeView() {
+      return ({ node, editor, getPos }) => {
+        const img = document.createElement('img')
+        img.setAttribute('data-type', part.typeName)
+        img.draggable = false
+        const image = editor.extensionManager.extensions.find((e) => e.name === 'image')
+        const resolveSrc = (image?.options as { resolveSrc?: (src: string) => string | Promise<string> } | undefined)
+          ?.resolveSrc ?? ((src: string) => src)
+
+        let token = 0
+        const apply = (params: BlockParams) => {
+          const attrs = render(params)
+          for (const a of Array.from(img.attributes)) {
+            if (a.name !== 'data-type' && a.name !== 'src' && !(a.name in attrs)) img.removeAttribute(a.name)
+          }
+          for (const [k, v] of Object.entries(attrs)) if (k !== 'src') img.setAttribute(k, v)
+          img.classList.toggle('is-unset', !attrs.src)
+          img.classList.remove('is-broken')
+          const current = ++token
+          if (!attrs.src) {
+            img.removeAttribute('src')
+            return
+          }
+          void Promise.resolve(resolveSrc(attrs.src))
+            .then((url) => current === token && img.setAttribute('src', url))
+            .catch(() => current === token && img.classList.add('is-broken'))
+        }
+        apply(paramsOf(node.attrs))
+
+        // Clic sur l'image : sélectionne le bloc racine (panneau de paramètres)
+        img.addEventListener('mousedown', (e) => {
+          const pos = getPos()
+          if (pos === undefined) return
+          const $pos = editor.state.doc.resolve(pos)
+          for (let d = $pos.depth; d > 0; d--) {
+            if ($pos.node(d).type.name === rootName) {
+              e.preventDefault()
+              editor.chain().focus().setNodeSelection($pos.before(d)).run()
+              return
+            }
+          }
+        })
+
+        return {
+          dom: img,
+          update: (updated) => {
+            if (updated.type !== node.type) return false
+            apply(paramsOf(updated.attrs))
+            return true
+          },
+          ignoreMutation: () => true,
+        }
+      }
+    },
+  })
 }

@@ -1,4 +1,4 @@
-import { defineBlock } from 'wysiwyg'
+import { defineBlock } from 'page-builder'
 import { icons } from '../icons'
 
 // Chargé à la demande (import dynamique) : absent du schéma au démarrage

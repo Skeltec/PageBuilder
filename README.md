@@ -1,4 +1,4 @@
-# wysiwyg
+# PageBuilder
 
 Éditeur de blocs basé sur Tiptap, organisé en librairie.
 
@@ -6,17 +6,18 @@
 src/
   core/      BlockEditor (classe unique), defineBlock, blocs inconnus
   assets/    module de fichiers : upload, références asset:id
-  ui/        vues par défaut, indépendantes et remplaçables
-  styles/    editor.css (requis), content.css (thème optionnel), ui.css (vues)
+  refs/      références génériques <schéma>:<id>, liens internes (LinkManager)
+  vue/       composants Vue 3, indépendants et remplaçables
+  styles/    editor.css (requis), content.css (thème optionnel), ui.css (composants)
 demo/        application de démonstration (consomme la librairie par son nom)
 ```
 
 ## Cœur
 
 ```ts
-import { BlockEditor } from 'wysiwyg'
-import 'wysiwyg/editor.css'
-import 'wysiwyg/content.css'
+import { BlockEditor } from 'page-builder'
+import 'page-builder/editor.css'
+import 'page-builder/content.css'
 
 const editor = new BlockEditor({
   element: '#editor',
@@ -29,22 +30,42 @@ const editor = new BlockEditor({
 
 Variante chaînable : `BlockEditor.builder().mount('#editor').blocks(...).build()`.
 
-## Vues
+## Composants Vue (`page-builder/vue`)
 
-Chaque vue implémente `BlockEditorView` (`attach(editor, target?) => cleanup`) et
-n'utilise que l'API publique de `BlockEditor` : on peut en remplacer une par la sienne.
+Vue 3 en peer dependency. Chaque composant n'utilise que l'API publique de
+`BlockEditor` : on peut en remplacer un par le sien. L'éditeur est fourni par
+`useBlockEditor()` (créé au montage, détruit au démontage) ou passé en prop `editor`.
 
-```ts
-import { Sidebar, BlockLibrary, BlockSettings, Toolbar } from 'wysiwyg/ui'
-import 'wysiwyg/ui.css'
+```vue
+<script setup lang="ts">
+import { BlockLibrary, BlockSettings, EditorContent, Sidebar, Toolbar, useBlockEditor } from 'page-builder/vue'
+import 'page-builder/editor.css'
+import 'page-builder/ui.css'
 
-editor.use(new Sidebar({ mount: '#left', title: 'Blocs', views: [new BlockLibrary({ view: 'grid' })] }))
-editor.use(new Sidebar({ mount: '#right', side: 'right', title: 'Paramètres', views: [new BlockSettings()] }))
-editor.use(new Toolbar({ mount: '#toolbar' }))
-// ou sans Sidebar : new BlockLibrary({ mount: '#library' })
+const editor = useBlockEditor({ blocks, content, assets, on: { update: ({ html }) => save(html) } })
+</script>
+
+<template>
+  <Sidebar title="Blocs" persist-key="left"><BlockLibrary view="grid" /></Sidebar>
+  <main>
+    <Toolbar />
+    <EditorContent />
+  </main>
+  <Sidebar side="right" title="Paramètres"><BlockSettings /></Sidebar>
+</template>
 ```
 
-Thème des vues : variables `--wy-*` (voir `ui.css`). Aucune dépendance à Tailwind.
+- `Sidebar` : `side`, `title`, `collapsible`, `persist-key`, `v-model:collapsed`, slots `default` / `header`.
+- `BlockLibrary` : `view` (`list` | `grid`), événement `insert`, slot `item` ({ block, insert }).
+- `BlockSettings` : slot `empty` ; `ParamField` réutilisable pour un panneau maison.
+- `Toolbar` : `items` (`ToolbarItem[]`, défaut `defaultToolbarItems`), slot pour boutons en plus.
+- Composables pour vos propres composants : `useEditor()`, `useEditorState(editor, (e) => …)`,
+  `useEditorEvent(editor, 'uploadError', …)`, `provideBlockEditor(editor)` (éditeur créé hors de Vue).
+
+Les composants sont écrits en `defineComponent` + `h()` (TypeScript 7 n'a pas
+encore de `vue-tsc`) ; la démo utilise un SFC (`demo/App.vue`).
+
+Thème : variables `--wy-*` (voir `ui.css`). Aucune dépendance à Tailwind.
 
 ## Fichiers (upload + liens relatifs)
 
@@ -71,6 +92,26 @@ new BlockEditor({
 - Rendu public : `await editor.getResolvedHTML()`, ou côté serveur
   `resolveAssetRefs(html, resolve)` (sans DOM). `listAssetIds(html)` pour nettoyer les orphelins.
 - Événements : `uploadStart`, `uploadEnd`, `uploadError` (`stage: 'validation' | 'upload'`).
+
+## Liens internes (`page:id`…)
+
+```ts
+new BlockEditor({
+  links: [{
+    scheme: 'page',
+    pick: ({ current, text }) => openPagePicker(current),   // { id, label } | null
+    resolve: (id) => router.resolve({ name: 'page', params: { id } }).href,
+  }],
+})
+```
+
+- `editor.links.insert()` (bouton « 🔗 Page » de la Toolbar) : ouvre le sélecteur, puis
+  lie la sélection, met à jour le lien sous le curseur, ou insère le libellé de la cible.
+- Le HTML ne contient que `<a href="page:42">` : renommer / déplacer la page ne casse rien.
+- Rendu : `await editor.getResolvedHTML()` résout fichiers et liens ; sans éditeur,
+  `resolveRefs(html, { asset: …, page: … })` (sans DOM). `listRefIds(html, 'page')`
+  liste les liens sortants.
+- Les schémas configurés sont conservés aussi dans les blocs inconnus (DOMPurify).
 
 ## Scripts
 

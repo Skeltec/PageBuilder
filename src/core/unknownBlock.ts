@@ -14,11 +14,21 @@ import DOMPurify from 'dompurify'
 export interface UnknownBlockOptions {
   /** Charge la définition du bloc ; true si chargé (l'éditeur sera recréé) */
   onRetry: (blockType: string) => Promise<boolean>
+  /** Schémas de références à conserver dans src / href (`asset:`, `page:`…) */
+  schemes: string[]
 }
 
-/** HTML assaini : pas de <script>, pas de onerror=…, pas de javascript: */
-function sanitize(html: string) {
-  return DOMPurify.sanitize(html)
+/**
+ * HTML assaini : pas de <script>, pas de onerror=…, pas de javascript:.
+ * DOMPurify retire les schémas inconnus (`asset:42`) : on ajoute ceux de
+ * l'éditeur à sa liste d'URIs permises (même expression que son défaut).
+ */
+function sanitize(html: string, schemes: string[]) {
+  if (!schemes.length) return DOMPurify.sanitize(html)
+  const allowed = ['https?', 'ftps?', 'mailto', 'tel', 'callto', 'sms', 'cid', 'xmpp', 'matrix', ...schemes.map((s) => s.replace(/[.+-]/g, '\\$&'))].join('|')
+  return DOMPurify.sanitize(html, {
+    ALLOWED_URI_REGEXP: new RegExp(`^(?:(?:${allowed}):|[^a-z]|[a-z+.\\-]+(?:[^a-z+.\\-:]|$))`, 'i'),
+  })
 }
 
 function toElement(html: string) {
@@ -46,7 +56,7 @@ export const UnknownBlock = Node.create<UnknownBlockOptions>({
   draggable: true,
 
   addOptions() {
-    return { onRetry: async () => false }
+    return { onRetry: async () => false, schemes: [] }
   },
 
   addAttributes() {
@@ -58,6 +68,7 @@ export const UnknownBlock = Node.create<UnknownBlockOptions>({
 
   parseHTML() {
     const editor = this.editor
+    const { schemes } = this.options
     return [
       {
         tag: '[data-type]',
@@ -68,7 +79,7 @@ export const UnknownBlock = Node.create<UnknownBlockOptions>({
           const schema = editor?.schema
           // Type connu (bloc, partie de bloc, nœud/mark d'une autre extension) : pas pour nous
           if (schema && (schema.nodes[type] || schema.marks[type])) return false
-          return { blockType: type, html: sanitize(el.outerHTML) }
+          return { blockType: type, html: sanitize(el.outerHTML, schemes) }
         },
       },
     ]

@@ -6,19 +6,17 @@ import { NodeSelection, Plugin, Selection, type EditorState } from '@tiptap/pm/s
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { AssetImage } from '../assets/AssetImage'
 import { AssetManager, type AssetEvents } from '../assets/AssetManager'
-import { resolveAssetRefs } from '../assets/refs'
+import { LinkManager, type LinkAdapter } from '../refs/LinkManager'
+import { resolveRefs, type RefResolver } from '../refs/refs'
 import type { AssetAdapter } from '../assets/types'
 import { isFixedBlock, type BlockDefinition, type BlockParams } from './defineBlock'
 import { insertionRange } from './insertion'
 import { UnknownBlock } from './unknownBlock'
 
 /**
- * Vue (interface) branchée sur l'éditeur : librairie de blocs, panneau de
- * paramètres, barre d'outils, sidebar… ou la vôtre. Elle n'utilise que l'API
- * publique de BlockEditor et peut donc être remplacée librement.
- *
- * `target` : élément où s'afficher, fourni par un conteneur (ex. Sidebar) ;
- * sinon la vue utilise sa propre option `mount`. Retourne son nettoyage.
+ * Vue sans framework branchée sur l'éditeur avec use() (les composants Vue de
+ * `page-builder/vue` n'en ont pas besoin). `target` : élément où s'afficher, fourni
+ * par un éventuel conteneur. Retourne son nettoyage.
  */
 export interface BlockEditorView {
   attach(editor: BlockEditor, target?: HTMLElement): void | (() => void)
@@ -50,8 +48,12 @@ export interface BlockEditorEvents extends AssetEvents {
 export type BlockEditorListener<K extends keyof BlockEditorEvents> = (payload: BlockEditorEvents[K]) => void
 
 export interface BlockEditorOptions {
-  /** Élément (ou sélecteur CSS) où monter la zone éditable */
-  element: HTMLElement | string
+  /**
+   * Élément (ou sélecteur CSS) où monter la zone éditable. Absent : un <div>
+   * détaché est créé (`editor.element`), à insérer où l'on veut — c'est ce que
+   * fait le composant Vue EditorContent.
+   */
+  element?: HTMLElement | string
   /** Contenu HTML initial */
   content?: string
   /** Blocs disponibles (définis avec defineBlock) */
@@ -74,6 +76,8 @@ export interface BlockEditorOptions {
   contentWidth?: string
   /** Module de fichiers (upload + résolution des références `asset:id`) */
   assets?: AssetAdapter
+  /** Liens internes (`page:id`…) : sélecteur + résolution fournis par l'application */
+  links?: LinkAdapter[]
   /** Vues à brancher dès la création */
   views?: BlockEditorView[]
   /** Écouteurs d'événements */
@@ -84,9 +88,9 @@ export interface BlockEditorOptions {
  * Cœur de l'éditeur de blocs — la seule classe nécessaire. Enveloppe Tiptap,
  * compose les extensions et gère le cycle de vie (un schéma ProseMirror est
  * immuable : charger un bloc async recrée l'instance Tiptap — `tiptap` pointe
- * toujours sur l'instance courante). Aucune interface n'est imposée : les vues
- * (BlockLibrary, BlockSettings, Toolbar, Sidebar… dans le module `ui`) se
- * branchent avec use().
+ * toujours sur l'instance courante). Aucune interface n'est imposée : les
+ * composants Vue (`page-builder/vue`) n'utilisent que l'API publique ; une
+ * intégration sans framework peut se brancher avec use().
  *
  *   const editor = new BlockEditor({
  *     element: '#editor',
@@ -105,6 +109,8 @@ export class BlockEditor {
 
   /** Module de fichiers ; null si aucun AssetAdapter n'est configuré */
   readonly assets: AssetManager | null
+  /** Liens internes ; null si aucun LinkAdapter n'est configuré */
+  readonly links: LinkManager | null
   readonly element: HTMLElement
 
   private instance: Editor
@@ -121,7 +127,8 @@ export class BlockEditor {
   }
 
   constructor(private readonly options: BlockEditorOptions) {
-    this.element = resolveElement(options.element)
+    this.element = options.element === undefined ? document.createElement('div') : resolveElement(options.element)
+    this.element.classList.add('block-editor')
     if (options.contentWidth !== undefined && !/^[\d.]+(rem|em|px|ch|%)$/.test(options.contentWidth)) {
       throw new Error(`Largeur invalide : ${options.contentWidth}`)
     }
@@ -144,6 +151,8 @@ export class BlockEditor {
           emit: (event, payload) => this.emit(event, payload as BlockEditorEvents[typeof event]),
         })
       : null
+
+    this.links = options.links?.length ? new LinkManager(options.links, { tiptap: () => this.instance }) : null
 
     for (const [event, listener] of Object.entries(options.on ?? {})) {
       if (listener) this.on(event as keyof BlockEditorEvents, listener as BlockEditorListener<keyof BlockEditorEvents>)
@@ -175,12 +184,23 @@ export class BlockEditor {
     return this.instance.getHTML()
   }
 
-  /** HTML avec les références `asset:id` remplacées par leurs URLs (rendu public) */
-  async getResolvedHTML() {
-    const html = this.getHTML()
-    if (!this.assets) return html
-    const assets = this.assets
-    return resolveAssetRefs(html, (id) => assets.resolveUrl(id), assets.scheme)
+  /** HTML avec les références (`asset:id`, `page:id`…) remplacées par leurs URLs (rendu public) */
+  getResolvedHTML() {
+    return resolveRefs(this.getHTML(), this.resolvers())
+  }
+
+  /** Resolvers par schéma (fichiers + liens), pour resolveRefs côté application */
+  resolvers(): Record<string, RefResolver> {
+    const { assets, links } = this
+    return {
+      ...(assets && { [assets.scheme]: (id: string) => assets.resolveUrl(id) }),
+      ...links?.resolvers(),
+    }
+  }
+
+  /** Schémas de références gérés (fichiers + liens) */
+  get schemes(): string[] {
+    return [...(this.assets ? [this.assets.scheme] : []), ...(this.links?.schemes ?? [])]
   }
 
   /** Remplace le contenu ; ce qui n'est pas dans le schéma devient unknownBlock (ou est ignoré) */
@@ -313,8 +333,7 @@ export class BlockEditor {
   }
 
   /**
-   * Branche une vue (BlockLibrary, BlockSettings, Toolbar, Sidebar… ou la
-   * vôtre). Retourne la fonction pour la débrancher ; destroy() le fait aussi.
+   * Branche une vue sans framework (objet avec attach()). Retourne la fonction pour la débrancher ; destroy() le fait aussi.
    */
   use(view: BlockEditorView, target?: HTMLElement) {
     const cleanup = view.attach(this, target) ?? (() => {})
@@ -394,17 +413,17 @@ export class BlockEditor {
     for (const listener of this.listeners[event]) listener(payload)
   }
 
-  /** StarterKit, avec le lien configuré pour accepter les références `asset:` */
+  /** StarterKit, avec le lien configuré pour accepter les références (`asset:`, `page:`…) */
   private starterKit() {
     const options = this.options.starterKit ?? {}
     if (options === false) return []
-    const { assets } = this
-    if (!assets || options.link === false) return [StarterKit.configure(options)]
+    const { schemes } = this
+    if (!schemes.length || options.link === false) return [StarterKit.configure(options)]
     const link = options.link ?? {}
     return [
       StarterKit.configure({
         ...options,
-        link: { openOnClick: false, ...link, protocols: [...(link.protocols ?? []), assets.scheme] },
+        link: { openOnClick: false, ...link, protocols: [...(link.protocols ?? []), ...schemes] },
       }),
     ]
   }
@@ -429,7 +448,7 @@ export class BlockEditor {
               }),
             ]),
         ...this.blockList.flatMap((b) => b.extensions),
-        ...(options.unknownBlocks === false ? [] : [UnknownBlock.configure({ onRetry: (type) => this.loadBlock(type) })]),
+        ...(options.unknownBlocks === false ? [] : [UnknownBlock.configure({ onRetry: (type) => this.loadBlock(type), schemes: this.schemes })]),
         // Image par défaut, sauf si l'application fournit son propre nœud "image"
         ...(has('image') ? [] : [AssetImage.configure({ resolveSrc: (src) => assets?.resolveSrc(src) ?? src })]),
         ...(assets ? [assets.extension()] : []),
@@ -479,7 +498,7 @@ export class BlockEditorBuilder {
   } = { blocks: [], asyncBlocks: {}, extensions: [], views: [] }
   private readonly subscriptions: ((editor: BlockEditor) => void)[] = []
 
-  /** Élément (ou sélecteur CSS) où monter l'éditeur — obligatoire */
+  /** Élément (ou sélecteur CSS) où monter l'éditeur (sinon : editor.element détaché) */
   mount(target: HTMLElement | string) {
     this.opts.element = resolveElement(target)
     return this
@@ -551,7 +570,13 @@ export class BlockEditorBuilder {
     return this
   }
 
-  /** Branche des vues (BlockLibrary, BlockSettings, Toolbar, Sidebar, ou la vôtre) */
+  /** Liens internes (`page:id`…) */
+  links(...adapters: LinkAdapter[]) {
+    this.opts.links = [...(this.opts.links ?? []), ...adapters]
+    return this
+  }
+
+  /** Branche des vues sans framework (objets avec attach()) */
   use(...views: BlockEditorView[]) {
     this.opts.views.push(...views)
     return this
@@ -575,9 +600,8 @@ export class BlockEditorBuilder {
   }
 
   build(): BlockEditor {
-    if (!this.opts.element) throw new Error('build() : appeler mount() avant')
     const { views, ...rest } = this.opts
-    const editor = new BlockEditor({ ...rest, element: this.opts.element })
+    const editor = new BlockEditor(rest)
     for (const subscribe of this.subscriptions) subscribe(editor)
     for (const view of views) editor.use(view)
     return editor

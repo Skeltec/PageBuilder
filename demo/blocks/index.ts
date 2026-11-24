@@ -1,4 +1,4 @@
-import { defineBlock } from 'wysiwyg'
+import { defineBlock } from 'page-builder'
 import { icons } from './icons'
 
 // Nombre de colonnes variable : <Repeat> + paramètre number

@@ -10,11 +10,11 @@ export default defineConfig({
     sourcemap: true,
     minify: false,
     lib: {
-      entry: { index: 'src/index.ts', ui: 'src/ui/index.ts' },
+      entry: { index: 'src/index.ts', vue: 'src/vue/index.ts' },
       formats: ['es'],
     },
     rollupOptions: {
-      external: [/^@tiptap\//, 'dompurify'],
+      external: [/^@tiptap\//, 'dompurify', 'vue'],
     },
   },
   plugins: [

@@ -1,5 +1,5 @@
 /*
- * Vues par défaut (module ui) : Sidebar, BlockLibrary, BlockSettings, Toolbar.
+ * Vues Vue (page-builder/vue) : Sidebar, BlockLibrary, BlockSettings, Toolbar, EditorContent.
  * Sans dépendance à Tailwind. Thème via variables CSS (--wy-*), à redéfinir
  * sur :root ou un parent ; classes préfixées wy- pour éviter les collisions.
  */
@@ -211,3 +211,8 @@
 .wy-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; }
 .wy-toolbar-status { margin-left: auto; font-size: 0.75rem; color: var(--wy-text-soft); }
 .wy-toolbar-status[data-error] { color: var(--wy-danger); }
+
+/* Zone éditable (EditorContent) */
+.wy-editor-content { display: flex; flex-direction: column; }
+.wy-editor-content > .block-editor { flex: 1; display: flex; flex-direction: column; padding-block: var(--wy-editor-padding, 2.5rem); }
+.wy-editor-content > .block-editor > .ProseMirror { flex: 1; }

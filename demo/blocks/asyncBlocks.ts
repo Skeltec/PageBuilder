@@ -1,4 +1,4 @@
-import type { BlockDefinition } from 'wysiwyg'
+import type { BlockDefinition } from 'page-builder'
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 

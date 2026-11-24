@@ -9,8 +9,8 @@
     "skipLibCheck": true,
     "types": ["vite/client"],
     "paths": {
-      "wysiwyg": ["./src/index.ts"],
-      "wysiwyg/ui": ["./src/ui/index.ts"]
+      "page-builder": ["./src/index.ts"],
+      "page-builder/vue": ["./src/vue/index.ts"]
     }
   },
   "include": ["src", "demo"]

@@ -1,6 +1,6 @@
 {
   "name": "page-builder",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Éditeur de blocs (Tiptap) : cœur BlockEditor, composants Vue remplaçables, module de fichiers",
   "private": true,
   "type": "module",

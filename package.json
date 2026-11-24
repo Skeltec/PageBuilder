@@ -1,21 +1,52 @@
 {
-  "name": "wysiwyg-poc",
+  "name": "wysiwyg",
+  "version": "0.1.0",
+  "description": "Éditeur de blocs (Tiptap) : cœur BlockEditor, vues remplaçables, module de fichiers",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./dist/types/ui/index.d.ts",
+      "import": "./dist/ui.js"
+    },
+    "./editor.css": "./dist/editor.css",
+    "./content.css": "./dist/content.css",
+    "./ui.css": "./dist/ui.css"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build -c vite.lib.config.ts && tsc -p tsconfig.build.json",
+    "build:demo": "vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
+    "dompurify": "^3.4.16"
+  },
+  "peerDependencies": {
+    "@tiptap/core": "^3.31.4",
+    "@tiptap/extensions": "^3.31.4",
+    "@tiptap/pm": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4"
+  },
+  "devDependencies": {
     "@tiptap/core": "^3.31.4",
     "@tiptap/extensions": "^3.31.4",
     "@tiptap/pm": "^3.31.4",
     "@tiptap/starter-kit": "^3.31.4",
-    "dompurify": "^3.4.16"
-  },
-  "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",

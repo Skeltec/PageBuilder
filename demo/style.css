@@ -1,0 +1,7 @@
+@import "tailwindcss";
+/* Tailwind : templates des blocs + layout de la démo. Les feuilles de la
+   librairie n'en dépendent pas. */
+@source "./";
+@import "wysiwyg/editor.css";
+@import "wysiwyg/content.css";
+@import "wysiwyg/ui.css";

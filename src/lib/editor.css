@@ -1,0 +1,136 @@
+/* Habillage de l'éditeur : poignées, slots, blocs inconnus. Requis. */
+
+.ProseMirror {
+  outline: none;
+  min-height: 300px;
+  /* Centré, largeur max --block-content-width ; garde toujours une gouttière
+     pour la poignée de drag */
+  --block-gutter: 2.5rem;
+  width: 100%;
+  max-width: min(var(--block-content-width, 100%), calc(100% - 2 * var(--block-gutter)));
+  margin-inline: auto;
+}
+
+/* Bloc racine : contour au survol, pour voir ce qu'on édite */
+.ProseMirror [data-block-root] {
+  position: relative;
+  border-radius: 0.25rem;
+  outline: 1px solid transparent;
+  outline-offset: 2px;
+}
+.ProseMirror [data-block-root]:hover,
+.ProseMirror [data-block-root].ProseMirror-selectednode {
+  outline-color: var(--color-indigo-300);
+}
+
+/* Poignée de drag (NodeView) */
+.ProseMirror .drag-handle {
+  position: absolute;
+  left: -1.5rem;
+  top: 0;
+  width: 1.25rem;
+  text-align: center;
+  line-height: 1.5rem;
+  color: var(--color-slate-400);
+  cursor: grab;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ProseMirror .block-wrapper:hover > .drag-handle,
+.ProseMirror .block-wrapper.ProseMirror-selectednode > .drag-handle {
+  opacity: 1;
+}
+.ProseMirror .drag-handle:hover {
+  color: var(--color-indigo-500);
+}
+
+/* Enfant <Block /> figé dans un autre template : pas de poignée */
+.ProseMirror .block-wrapper.is-fixed > .drag-handle {
+  display: none;
+}
+
+/* Zones éditables : outline (pas border/padding) pour ne pas décaler la mise en
+   page par rapport au rendu final */
+.ProseMirror [data-slot] {
+  outline: 1px dashed var(--color-slate-300);
+  outline-offset: -1px;
+}
+
+/* Placeholder des slots SingleLine / MultiLine */
+.ProseMirror .is-empty[data-placeholder]:not([data-placeholder=""])::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-slate-400);
+}
+
+.ProseMirror [data-slot="single"],
+.ProseMirror [data-slot="multi"] {
+  outline-style: dotted;
+}
+
+/* Bloc inconnu : aperçu lecture seule + barre d'actions flottante */
+.ProseMirror .unknown-block {
+  position: relative;
+  outline: 1px dashed var(--color-rose-300);
+  outline-offset: -1px;
+  background: repeating-linear-gradient(-45deg, transparent 0 8px, var(--color-rose-50) 8px 16px);
+}
+.ProseMirror .unknown-block.ProseMirror-selectednode {
+  outline: 2px solid var(--color-rose-400);
+}
+.ProseMirror .unknown-block-content {
+  opacity: 0.7;
+  pointer-events: none;
+}
+.ProseMirror .unknown-block-bar {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-radius: 9999px;
+  background: var(--color-white);
+  padding: 0.125rem 0.25rem 0.125rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1.5rem;
+  color: var(--color-rose-700);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.15);
+}
+.ProseMirror .unknown-block-status { color: var(--color-slate-500); }
+.ProseMirror .unknown-block-bar button {
+  border-radius: 9999px;
+  padding: 0 0.625rem;
+  color: var(--color-slate-700);
+  cursor: pointer;
+}
+.ProseMirror .unknown-block-bar button:hover { background: var(--color-slate-100); }
+.ProseMirror .unknown-block-bar button:disabled { opacity: 0.5; cursor: wait; }
+.ProseMirror .unknown-block-content [data-slot] { outline: 0; }
+
+/* Bloc dont les paramètres sont affichés (le plus interne contenant le curseur) */
+.ProseMirror [data-block-root].is-active {
+  outline-color: var(--color-indigo-500);
+}
+
+/* Vignettes générées : rendu réel du bloc, réduit au quart */
+.block-thumb {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+.block-thumb-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 400%;
+  padding: 2rem;
+  transform: scale(0.25);
+  transform-origin: 0 0;
+  pointer-events: none;
+}

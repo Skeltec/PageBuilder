@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WYSIWYG POC</title>
+  </head>
+  <body class="h-screen overflow-hidden bg-slate-100 text-slate-900">
+    <div class="flex h-full">
+      <!-- Gauche : librairie de blocs -->
+      <aside id="left-panel" class="panel border-r" data-side="left">
+        <div class="panel-header">
+          <h2 class="panel-title">Blocs</h2>
+          <button type="button" class="panel-toggle" aria-label="Réduire la librairie" aria-expanded="true">«</button>
+        </div>
+        <div id="library" class="panel-body"></div>
+      </aside>
+
+      <!-- Centre : éditeur (+ rendu et HTML pour la démo) -->
+      <main class="flex min-w-0 flex-1 flex-col overflow-y-auto bg-white">
+        <div id="toolbar" class="sticky top-0 z-20 flex flex-wrap gap-1 border-b border-slate-200 bg-white/95 px-4 py-2 backdrop-blur"></div>
+        <div id="editor" class="flex flex-1 flex-col py-10 [&>.ProseMirror]:flex-1"></div>
+
+        <!-- Démo : rendu final et HTML, sous l'éditeur -->
+        <div class="space-y-4 border-t border-slate-200 bg-slate-50 p-6">
+          <details class="rounded-xl bg-white p-4 shadow-sm">
+            <summary class="cursor-pointer font-semibold">Rendu (HTML final, sans l'éditeur)</summary>
+            <div id="preview" class="rich-content mx-auto mt-3 max-w-3xl border-t border-slate-200 pt-4"></div>
+          </details>
+
+          <details class="rounded-xl bg-white p-4 shadow-sm">
+            <summary class="cursor-pointer font-semibold">HTML généré</summary>
+            <textarea
+              id="output"
+              spellcheck="false"
+              class="mt-3 block h-80 w-full resize-y rounded bg-slate-900 p-4 font-mono text-xs text-slate-100"
+            ></textarea>
+            <div class="mt-2 flex items-center gap-3">
+              <button
+                id="reload"
+                type="button"
+                class="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+              >
+                Recharger l'éditeur avec ce contenu
+              </button>
+              <span id="output-status" class="text-xs text-slate-500"></span>
+            </div>
+          </details>
+        </div>
+      </main>
+
+      <!-- Droite : paramètres du bloc -->
+      <aside id="right-panel" class="panel border-l" data-side="right">
+        <div class="panel-header">
+          <h2 class="panel-title">Paramètres</h2>
+          <button type="button" class="panel-toggle" aria-label="Réduire les paramètres" aria-expanded="true">»</button>
+        </div>
+        <div id="settings" class="panel-body"></div>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -4,6 +4,10 @@ import { insertionRange, insertionRangeAt } from '../core/insertion'
 import { DEFAULT_SCHEME, parseAssetRef, toAssetRef } from './refs'
 import { acceptsFile, isImage, type AssetAdapter, type AssetRef } from './types'
 
+/** `accept` ne vise que des images (image/*, image/png…) */
+const onlyImages = (accept: string | undefined) =>
+  !!accept?.trim() && accept.split(',').every((rule) => rule.trim().toLowerCase().startsWith('image/'))
+
 /** Événements émis pendant un téléversement (relayés par BlockEditor) */
 export interface AssetEvents {
   uploadStart: { file: File }
@@ -65,8 +69,17 @@ export class AssetManager {
     return id ? this.resolveUrl(id) : src
   }
 
-  /** Ouvre le sélecteur de fichiers puis téléverse ; [] si annulé */
-  pickFiles({ accept = this.adapter.accept, multiple = true }: { accept?: string; multiple?: boolean } = {}) {
+  /**
+   * Ouvre le sélecteur de fichiers puis téléverse et insère ; [] si annulé.
+   * Avec `adapter.pick` : choisit des fichiers existants et les insère.
+   */
+  async pickFiles({ accept = this.adapter.accept, multiple = true }: { accept?: string; multiple?: boolean } = {}) {
+    if (this.adapter.pick) {
+      const refs = (await this.adapter.pick({ accept, multiple, current: null })) ?? []
+      const chosen = multiple ? refs : refs.slice(0, 1)
+      this.insert(chosen, undefined, accept)
+      return chosen
+    }
     return new Promise<AssetRef[]>((resolve) => {
       const input = document.createElement('input')
       input.type = 'file'
@@ -82,8 +95,14 @@ export class AssetManager {
    * Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
    * (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
    * null si annulé ou refusé (uploadError émis).
+   * Avec `adapter.pick` : choisit un fichier existant ; `current` (référence ou
+   * URL actuelle) lui est transmis pour présélection.
    */
-  pickRef({ accept = 'image/*' }: { accept?: string } = {}) {
+  async pickRef({ accept = 'image/*', current = null }: { accept?: string; current?: string | null } = {}) {
+    if (this.adapter.pick) {
+      const refs = await this.adapter.pick({ accept, multiple: false, current: parseAssetRef(current, this.scheme) })
+      return refs?.length ? this.ref(refs[0].id) : null
+    }
     return new Promise<string | null>((resolve) => {
       const input = document.createElement('input')
       input.type = 'file'
@@ -95,6 +114,20 @@ export class AssetManager {
       input.addEventListener('cancel', () => resolve(null))
       input.click()
     })
+  }
+
+  /**
+   * Insère des fichiers déjà téléversés (ex. choisis dans une médiathèque) :
+   * images en bloc <img> (alt de la référence), autres fichiers en lien.
+   * Image ou lien selon `ref.type`, à défaut selon `accept`. `at` : position
+   * d'insertion (défaut : curseur).
+   */
+  insert(refs: Iterable<AssetRef>, at?: number, accept?: string) {
+    let pos = at
+    for (const ref of refs) {
+      const image = ref.type ? ref.type.startsWith('image/') : onlyImages(accept)
+      pos = image ? this.insertImage(ref, pos) : this.insertLink(this.ref(ref.id), ref.name ?? ref.id, pos)
+    }
   }
 
   /** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
@@ -223,6 +256,16 @@ export class AssetManager {
     return range.from + node.nodeSize
   }
 
+  /** Image déjà téléversée ; retourne la position suivante */
+  private insertImage(ref: AssetRef, pos?: number) {
+    const { state, view } = this.host.tiptap()
+    const type = state.schema.nodes.image
+    const node = type.create({ src: this.ref(ref.id), alt: ref.alt ?? ref.name ?? '' })
+    const range = pos === undefined ? insertionRange(state, type) : insertionRangeAt(state, pos, type)
+    view.dispatch(state.tr.replaceWith(range.from, range.to, node).scrollIntoView())
+    return range.from + node.nodeSize
+  }
+
   private findImage(token: string) {
     const { state } = this.host.tiptap()
     let found: { pos: number; src: string } | null = null
@@ -263,24 +306,37 @@ export class AssetManager {
     view.dispatch(state.tr.setMeta(pendingKey, { remove: token }))
   }
 
-  /** Lien vers le fichier : dans le texte si la position est dans un paragraphe, sinon nouveau paragraphe */
+  /** Lien d'un fichier en cours d'envoi, à la position suivie */
   private insertFileLink(token: string, ref: string, name: string) {
+    const { state } = this.host.tiptap()
+    const tracked = pendingKey.getState(state)?.get(token)
+    this.insertLink(ref, name, tracked, token)
+  }
+
+  /**
+   * Lien vers le fichier : dans le texte si la position est dans un paragraphe,
+   * sinon nouveau paragraphe ; retourne la position suivante.
+   */
+  private insertLink(ref: string, name: string, at?: number, token?: string) {
     const editor = this.host.tiptap()
     const { state, view, schema } = editor
-    const tracked = pendingKey.getState(state)?.get(token)
-    const pos = Math.min(tracked ?? state.selection.from, state.doc.content.size)
+    const pos = Math.min(at ?? state.selection.from, state.doc.content.size)
     const link = schema.marks.link
     const text = schema.text(name, link ? [link.create({ href: ref })] : [])
 
     const $pos = state.doc.resolve(pos)
-    const tr = state.tr.setMeta(pendingKey, { remove: token })
+    const tr = token ? state.tr.setMeta(pendingKey, { remove: token }) : state.tr
+    let next: number
     if ($pos.parent.inlineContent && (!link || $pos.parent.type.allowsMarkType(link))) {
       tr.insert(pos, text)
+      next = pos + text.nodeSize
     } else {
       const paragraph = schema.nodes.paragraph.create(null, text)
-      const range = tracked === undefined ? insertionRange(state, paragraph.type) : insertionRangeAt(state, pos, paragraph.type)
+      const range = at === undefined ? insertionRange(state, paragraph.type) : insertionRangeAt(state, pos, paragraph.type)
       tr.replaceWith(range.from, range.to, paragraph)
+      next = range.from + paragraph.nodeSize
     }
     view.dispatch(tr.scrollIntoView())
+    return next
   }
 }

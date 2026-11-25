@@ -224,6 +224,8 @@ function acceptsFile(accept, file) {
 }
 //#endregion
 //#region src/assets/AssetManager.ts
+/** `accept` ne vise que des images (image/*, image/png…) */
+var onlyImages = (accept) => !!accept?.trim() && accept.split(",").every((rule) => rule.trim().toLowerCase().startsWith("image/"));
 /** Positions des fichiers joints en cours d'envoi, suivies au fil des modifications */
 var pendingKey = new PluginKey("assetPending");
 /**
@@ -265,8 +267,21 @@ var AssetManager = class {
 		const id = parseAssetRef(src, this.scheme);
 		return id ? this.resolveUrl(id) : src;
 	}
-	/** Ouvre le sélecteur de fichiers puis téléverse ; [] si annulé */
-	pickFiles({ accept = this.adapter.accept, multiple = true } = {}) {
+	/**
+	* Ouvre le sélecteur de fichiers puis téléverse et insère ; [] si annulé.
+	* Avec `adapter.pick` : choisit des fichiers existants et les insère.
+	*/
+	async pickFiles({ accept = this.adapter.accept, multiple = true } = {}) {
+		if (this.adapter.pick) {
+			const refs = await this.adapter.pick({
+				accept,
+				multiple,
+				current: null
+			}) ?? [];
+			const chosen = multiple ? refs : refs.slice(0, 1);
+			this.insert(chosen, void 0, accept);
+			return chosen;
+		}
 		return new Promise((resolve) => {
 			const input = document.createElement("input");
 			input.type = "file";
@@ -281,8 +296,18 @@ var AssetManager = class {
 	* Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
 	* (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
 	* null si annulé ou refusé (uploadError émis).
+	* Avec `adapter.pick` : choisit un fichier existant ; `current` (référence ou
+	* URL actuelle) lui est transmis pour présélection.
 	*/
-	pickRef({ accept = "image/*" } = {}) {
+	async pickRef({ accept = "image/*", current = null } = {}) {
+		if (this.adapter.pick) {
+			const refs = await this.adapter.pick({
+				accept,
+				multiple: false,
+				current: parseAssetRef(current, this.scheme)
+			});
+			return refs?.length ? this.ref(refs[0].id) : null;
+		}
 		return new Promise((resolve) => {
 			const input = document.createElement("input");
 			input.type = "file";
@@ -294,6 +319,16 @@ var AssetManager = class {
 			input.addEventListener("cancel", () => resolve(null));
 			input.click();
 		});
+	}
+	/**
+	* Insère des fichiers déjà téléversés (ex. choisis dans une médiathèque) :
+	* images en bloc <img> (alt de la référence), autres fichiers en lien.
+	* Image ou lien selon `ref.type`, à défaut selon `accept`. `at` : position
+	* d'insertion (défaut : curseur).
+	*/
+	insert(refs, at, accept) {
+		let pos = at;
+		for (const ref of refs) pos = (ref.type ? ref.type.startsWith("image/") : onlyImages(accept)) ? this.insertImage(ref, pos) : this.insertLink(this.ref(ref.id), ref.name ?? ref.id, pos);
 	}
 	/** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
 	async uploadRef(file) {
@@ -437,6 +472,18 @@ var AssetManager = class {
 		view.dispatch(tr.scrollIntoView());
 		return range.from + node.nodeSize;
 	}
+	/** Image déjà téléversée ; retourne la position suivante */
+	insertImage(ref, pos) {
+		const { state, view } = this.host.tiptap();
+		const type = state.schema.nodes.image;
+		const node = type.create({
+			src: this.ref(ref.id),
+			alt: ref.alt ?? ref.name ?? ""
+		});
+		const range = pos === void 0 ? insertionRange(state, type) : insertionRangeAt(state, pos, type);
+		view.dispatch(state.tr.replaceWith(range.from, range.to, node).scrollIntoView());
+		return range.from + node.nodeSize;
+	}
 	findImage(token) {
 		const { state } = this.host.tiptap();
 		let found = null;
@@ -478,22 +525,35 @@ var AssetManager = class {
 		const { state, view } = this.host.tiptap();
 		view.dispatch(state.tr.setMeta(pendingKey, { remove: token }));
 	}
-	/** Lien vers le fichier : dans le texte si la position est dans un paragraphe, sinon nouveau paragraphe */
+	/** Lien d'un fichier en cours d'envoi, à la position suivie */
 	insertFileLink(token, ref, name) {
-		const { state, view, schema } = this.host.tiptap();
+		const { state } = this.host.tiptap();
 		const tracked = pendingKey.getState(state)?.get(token);
-		const pos = Math.min(tracked ?? state.selection.from, state.doc.content.size);
+		this.insertLink(ref, name, tracked, token);
+	}
+	/**
+	* Lien vers le fichier : dans le texte si la position est dans un paragraphe,
+	* sinon nouveau paragraphe ; retourne la position suivante.
+	*/
+	insertLink(ref, name, at, token) {
+		const { state, view, schema } = this.host.tiptap();
+		const pos = Math.min(at ?? state.selection.from, state.doc.content.size);
 		const link = schema.marks.link;
 		const text = schema.text(name, link ? [link.create({ href: ref })] : []);
 		const $pos = state.doc.resolve(pos);
-		const tr = state.tr.setMeta(pendingKey, { remove: token });
-		if ($pos.parent.inlineContent && (!link || $pos.parent.type.allowsMarkType(link))) tr.insert(pos, text);
-		else {
+		const tr = token ? state.tr.setMeta(pendingKey, { remove: token }) : state.tr;
+		let next;
+		if ($pos.parent.inlineContent && (!link || $pos.parent.type.allowsMarkType(link))) {
+			tr.insert(pos, text);
+			next = pos + text.nodeSize;
+		} else {
 			const paragraph = schema.nodes.paragraph.create(null, text);
-			const range = tracked === void 0 ? insertionRange(state, paragraph.type) : insertionRangeAt(state, pos, paragraph.type);
+			const range = at === void 0 ? insertionRange(state, paragraph.type) : insertionRangeAt(state, pos, paragraph.type);
 			tr.replaceWith(range.from, range.to, paragraph);
+			next = range.from + paragraph.nodeSize;
 		}
 		view.dispatch(tr.scrollIntoView());
+		return next;
 	}
 };
 //#endregion
@@ -1655,4 +1715,4 @@ var BlockEditorBuilder = class {
 //#endregion
 export { resolveRefs as _, isFixedBlock as a, LinkManager as c, listAssetIds as d, parseAssetRef as f, parseRef as g, listRefIds as h, defineBlock as i, AssetManager as l, toAssetRef as m, BlockEditorBuilder as n, paramDefaults as o, resolveAssetRefs as p, UnknownBlock as r, safeFocusValue as s, BlockEditor as t, DEFAULT_SCHEME as u, toRef as v, AssetImage as y };
 
-//# sourceMappingURL=BlockEditor-COn6kcjx.js.map
+//# sourceMappingURL=BlockEditor-KK4osgZj.js.map

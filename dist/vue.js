@@ -1,4 +1,4 @@
-import { o as paramDefaults, s as safeFocusValue, t as BlockEditor } from "./BlockEditor-COn6kcjx.js";
+import { o as paramDefaults, s as safeFocusValue, t as BlockEditor } from "./BlockEditor-KK4osgZj.js";
 import { computed, defineComponent, h, inject, onBeforeUnmount, onMounted, onScopeDispose, provide, ref, shallowRef, toValue, watch, watchEffect } from "vue";
 //#region src/vue/context.ts
 var BlockEditorKey = Symbol("BlockEditor");
@@ -435,7 +435,10 @@ var ParamField = defineComponent({
 			if (!assets || busy.value) return;
 			busy.value = true;
 			try {
-				const ref = await assets.pickRef({ accept: "image/*" });
+				const ref = await assets.pickRef({
+					accept: "image/*",
+					current: String(props.value || "") || null
+				});
 				if (ref) emit("change", ref);
 			} finally {
 				busy.value = false;

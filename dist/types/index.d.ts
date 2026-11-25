@@ -9,7 +9,7 @@ export type { AssetEvents } from './assets/AssetManager';
 export { AssetImage } from './assets/AssetImage';
 export type { AssetImageOptions } from './assets/AssetImage';
 export { DEFAULT_SCHEME, listAssetIds, parseAssetRef, resolveAssetRefs, toAssetRef } from './assets/refs';
-export type { AssetAdapter, AssetRef, AssetUploadContext } from './assets/types';
+export type { AssetAdapter, AssetPickOptions, AssetRef, AssetUploadContext } from './assets/types';
 export { listRefIds, parseRef, resolveRefs, toRef } from './refs/refs';
 export type { RefResolver } from './refs/refs';
 export { LinkManager } from './refs/LinkManager';

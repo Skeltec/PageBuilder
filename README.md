@@ -93,6 +93,28 @@ new BlockEditor({
   `resolveAssetRefs(html, resolve)` (sans DOM). `listAssetIds(html)` pour nettoyer les orphelins.
 - Événements : `uploadStart`, `uploadEnd`, `uploadError` (`stage: 'validation' | 'upload'`).
 
+### Médiathèque (`pick`)
+
+Optionnel : l'application ouvre sa propre médiathèque au lieu du sélecteur natif.
+Utilisé par `pickFiles()` (boutons) et `pickRef()` (paramètres image de bloc) ;
+coller / glisser-déposer passent toujours par `upload`.
+
+```ts
+assets: {
+  upload, resolve,
+  async pick({ accept, multiple, current }) {
+    // current : id du paramètre image en cours (présélection), sinon null
+    const medias = await ouvrirMediatheque({ accept, multiple, current })
+    if (!medias) return null // annulé
+    return medias.map((m) => ({ id: m.id, name: m.nom, alt: m.alt, type: m.mime }))
+  },
+}
+```
+
+- `type` (MIME) décide image (`<img alt>`) ou lien ; absent : image si `accept` ne vise que `image/*`.
+- `editor.assets.insert(refs, at?)` insère des références déjà téléversées sans passer par `pick`.
+- Démo : `npm run dev`, puis `?mediatheque` dans l'URL.
+
 ## Liens internes (`page:id`…)
 
 ```ts

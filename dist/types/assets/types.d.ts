@@ -32,6 +32,21 @@ export interface AssetAdapter {
     maxSize?: number;
     /** Préfixe des références dans le HTML (défaut : "asset" → `asset:42`) */
     scheme?: string;
+    /**
+     * Choisir des fichiers existants (médiathèque de l'application) au lieu du
+     * sélecteur natif : utilisé par `pickFiles` et `pickRef` (boutons, paramètres
+     * image de bloc). Coller / glisser-déposer passent toujours par `upload`.
+     * null ou [] si annulé. L'application peut y proposer son propre téléversement.
+     */
+    pick?(options: AssetPickOptions): Promise<AssetRef[] | null>;
+}
+export interface AssetPickOptions {
+    /** Types acceptés (syntaxe <input accept>) */
+    accept?: string;
+    /** Plusieurs fichiers permis */
+    multiple: boolean;
+    /** id actuellement choisi (paramètre image de bloc), sinon null */
+    current: string | null;
 }
 export interface AssetUploadContext {
     /** Annulé si l'éditeur est détruit pendant l'envoi */
@@ -41,6 +56,13 @@ export interface AssetRef {
     id: string;
     /** Nom affiché pour un fichier joint (défaut : nom du fichier) */
     name?: string;
+    /** Texte alternatif d'une image insérée depuis `pick` */
+    alt?: string;
+    /**
+     * Type MIME, pour insérer un fichier choisi par `pick` en image ou en lien.
+     * Absent : image si `accept` ne vise que des images, sinon lien.
+     */
+    type?: string;
 }
 /** Type de fichier → rendu : image en ligne, sinon lien de téléchargement */
 export declare function isImage(file: Pick<File, 'type'>): boolean;

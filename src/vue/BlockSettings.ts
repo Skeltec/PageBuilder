@@ -86,7 +86,7 @@ export const ParamField = defineComponent({
       if (!assets || busy.value) return
       busy.value = true
       try {
-        const ref = await assets.pickRef({ accept: 'image/*' })
+        const ref = await assets.pickRef({ accept: 'image/*', current: String(props.value || '') || null })
         if (ref) emit('change', ref)
       } finally {
         busy.value = false

@@ -41,7 +41,10 @@ export declare class AssetManager {
     resolveUrl(id: string): Promise<string>;
     /** src / href quelconque → URL affichable (les URLs normales passent telles quelles) */
     resolveSrc(src: string): string | Promise<string>;
-    /** Ouvre le sélecteur de fichiers puis téléverse ; [] si annulé */
+    /**
+     * Ouvre le sélecteur de fichiers puis téléverse et insère ; [] si annulé.
+     * Avec `adapter.pick` : choisit des fichiers existants et les insère.
+     */
     pickFiles({ accept, multiple }?: {
         accept?: string;
         multiple?: boolean;
@@ -50,10 +53,20 @@ export declare class AssetManager {
      * Ouvre le sélecteur, téléverse un seul fichier et retourne sa référence
      * (`asset:42`) sans rien insérer : valeur d'un paramètre image de bloc.
      * null si annulé ou refusé (uploadError émis).
+     * Avec `adapter.pick` : choisit un fichier existant ; `current` (référence ou
+     * URL actuelle) lui est transmis pour présélection.
      */
-    pickRef({ accept }?: {
+    pickRef({ accept, current }?: {
         accept?: string;
+        current?: string | null;
     }): Promise<string | null>;
+    /**
+     * Insère des fichiers déjà téléversés (ex. choisis dans une médiathèque) :
+     * images en bloc <img> (alt de la référence), autres fichiers en lien.
+     * Image ou lien selon `ref.type`, à défaut selon `accept`. `at` : position
+     * d'insertion (défaut : curseur).
+     */
+    insert(refs: Iterable<AssetRef>, at?: number, accept?: string): void;
     /** Téléverse un fichier sans l'insérer ; retourne sa référence, null si refusé ou en erreur */
     uploadRef(file: File): Promise<string | null>;
     /**
@@ -70,13 +83,20 @@ export declare class AssetManager {
     private send;
     /** Image affichée tout de suite (blob:), en attente de son id ; retourne la position suivante */
     private insertImagePlaceholder;
+    /** Image déjà téléversée ; retourne la position suivante */
+    private insertImage;
     private findImage;
     private finishImage;
     private removeImage;
     /** Mémorise la position d'un fichier joint ; retourne la position suivante */
     private trackPending;
     private untrack;
-    /** Lien vers le fichier : dans le texte si la position est dans un paragraphe, sinon nouveau paragraphe */
+    /** Lien d'un fichier en cours d'envoi, à la position suivie */
     private insertFileLink;
+    /**
+     * Lien vers le fichier : dans le texte si la position est dans un paragraphe,
+     * sinon nouveau paragraphe ; retourne la position suivante.
+     */
+    private insertLink;
 }
 export {};
